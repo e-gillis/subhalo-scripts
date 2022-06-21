@@ -1,0 +1,9 @@
+#!/usr/bin/bash
+
+# Print running files 
+echo $'\n'Currently Processing:
+find ~/scratch/prod -name "*running"
+echo $'\n'Jobs Running Here:
+ps -u gillis | grep gyr
+echo
+
