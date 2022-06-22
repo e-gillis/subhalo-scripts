@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-MAX_JOBS=28
+MAX_JOBS=16
 
 echo PID $$
 
@@ -8,7 +8,7 @@ for dir in ??????_*/; do
 
         RUNNING=$(ps -u gillis | grep postprocessing | wc -l)
         while [[ $MAX_JOBS -le $RUNNING ]]; do
-                sleep 10s
+                sleep 150s
                 RUNNING=$(ps -u gillis | grep postprocessing | wc -l)
         done 
 
