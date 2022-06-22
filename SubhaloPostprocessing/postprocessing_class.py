@@ -38,7 +38,9 @@ class Processed_Simulation:
     halos: List[Processed_Subhalo]
         A list of Processed Halos (Processed_Halo class) in chronological order
     lookback_times: 1D numpy array
-        A list of lookback times corresponding to the halos
+        Array of lookback times in Gyrs corresponding to the halos
+    m_ratios: 1D numpy array
+        Original subhalo mass fraction enclosed by the infall virial radius
     halo_no: str
         The simulation number
     halo_id: str
@@ -62,6 +64,8 @@ class Processed_Simulation:
         self.halos = []
         # Saving times like this is also useful, but possibly redundant
         self.lookback_times = []
+        # Mass ratio here
+        self.m_ratios = []
         
         # Import Parameters
         param_name = glob(f"{directory}*params.dat")[0]
@@ -92,6 +96,7 @@ class Processed_Simulation:
                                                  fixed_rvir, ignore_idx, 
                                                  rho_bin_num))
                 self.lookback_times.append(self.halos[-1].lookback_time)
+                self.m_ratios.append(self.halos[-1].m_encl)
                 if fix_rvir:
                     fixed_rvir = self.halos[0].rvir
                 ignore_idx = self.halos[-1]._ignore_idx
@@ -117,6 +122,7 @@ class Processed_Simulation:
         self.halos.append(Processed_Halo(cluster_05, self.zinfall, fixed_rvir, 
                                          ignore_idx, rho_bin_num))
         self.lookback_times.append(self.halos[-1].lookback_time)
+        self.m_ratios.append(self.halos[-1].m_encl)
         
         if fix_rvir:
             fixed_rvir = self.halos[0].rvir
@@ -135,6 +141,7 @@ class Processed_Simulation:
                                              fixed_rvir, ignore_idx, 
                                              rho_bin_num))
             self.lookback_times.append(self.halos[-1].lookback_time)
+            self.m_ratios.append(self.halos[-1].m_encl)
 
             if fixed_rvir: 
                 fixed_rvir = self.halos[0].rvir
@@ -143,6 +150,7 @@ class Processed_Simulation:
             cluster_05.to_kpckms()
             
         self.lookback_times = np.array(self.lookback_times)
+        self.m_ratios = np.array(self.m_ratios) / self.halo_mass
         
         for halo in self.halos:
             halo._ignore_idx = np.array([])
@@ -336,8 +344,16 @@ class Processed_Halo:
         x, y and z position of the subhalo in galacticentric coordinates
     vcentre: numpy array
         Velocity of the cluster centre in km/s
+    r: float
+        Distance from galactic centr in kpc
     rvir: float
         Virial Radius of the subhalo, in kpc
+    vmax: float
+        Maximum circular velocity of dark matter particles
+    rvmax: float
+        Madius of maximum circlular velocity of dark matter particles
+    m_tot:
+        Total Subhalo mass, *including extratidal particles
     m_encl: float
         Mass enclosed by the virial radius in Msun
     r_values: 
@@ -394,7 +410,7 @@ class Processed_Halo:
         
         # Get mass enclosed
         m_encl = np.sum(cluster.m[cluster_r < rvir])
-        m_tot = cluster.mtot
+        m_tot = cluster.mtot # Read Mtot in from params
 
         # Set Attributes
         self.lookback_time = t0 - tinfall - cluster.tphys 
