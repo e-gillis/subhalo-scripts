@@ -22,6 +22,7 @@ parser.add_argument("--nmake", type=int, help="Number of simulations to initiali
 parser.add_argument("--mass-bin", type=int, help="Mass bin to sample subhalos from")
 parser.add_argument("--baryonic", action="store_true", help="Set to use baryonic potential")
 parser.add_argument("--cfactor", default=1, type=int, help="Factor to multiply concentration by")
+parser.add_argument("--kmax", default=None, type=int, help="Manually set kmax value")
 args = parser.parse_args()
 
 
@@ -196,7 +197,7 @@ peri_cut = np.logical_and(peri >= peri_range[0], peri < peri_range[1])
 # Now make sure we get the start right 
 index_cut = sim_nums > nstart
 # Combine Everything
-valid_indeces = np.argwhere(np.logical_and(mass_cut, index_cut)).flatten()[:nmake]
+valid_indeces = np.argwhere(np.logical_and(mass_cut, index_cut, peri_cut)).flatten()[:nmake]
 print(f"Valid simulation number set: {valid_indeces + 1}\n")
 
 
@@ -267,20 +268,22 @@ for i in valid_indeces:
     
     tstep=tfinal/10
     
-    
-    # Find optimal timestep
-    eps_nbody = epsilon / r200[indx] # Unitless
-    rbar  = r200[indx] * 1000        # In pc
-    
-    # Copied from clustertools
-    vbar = 0.06557 * np.sqrt(m200[indx] / rbar)
-    tbar = rbar / (1.023*vbar)
+    if args.kmax is None:
+        # Find optimal timestep
+        eps_nbody = epsilon / r200[indx] # Unitless
+        rbar  = r200[indx] * 1000        # In pc
 
-    tmax_nbody = 0.4 * (Nacc/1e5) * (eps_nbody/0.05)
-    tmax_gyrs  = tbar/1000 * tmax_nbody
-    kmax = -np.floor(np.log2(tmax_gyrs))
-    kmax = int(kmax)
+        # Copied from clustertools
+        vbar = 0.06557 * np.sqrt(m200[indx] / rbar)
+        tbar = rbar / (1.023*vbar)
 
+        tmax_nbody = 0.4 * (Nacc/1e5) * (eps_nbody/0.05)
+        tmax_gyrs  = tbar/1000 * tmax_nbody
+        kmax = -np.floor(np.log2(tmax_gyrs))
+        kmax = int(kmax)
+    else:
+        kmax = args.kmax
+    
     print("Using kmax:", kmax)
 
     mkhalo_params = get_mkhalo_params(r200[indx], m200[indx], c200[indx], Nacc, 
