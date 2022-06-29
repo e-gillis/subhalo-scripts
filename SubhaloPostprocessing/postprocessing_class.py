@@ -154,6 +154,12 @@ class Processed_Simulation:
         
         for halo in self.halos:
             halo._ignore_idx = np.array([])
+        
+    
+    def __str__(self):
+        """Return a string representation of the subhalo
+        """
+        return f"Subhalo {self.halo_no}-{self.halo_id}"
     
     
     def save(self):
@@ -345,7 +351,7 @@ class Processed_Halo:
     vcentre: numpy array
         Velocity of the cluster centre in km/s
     r: float
-        Distance from galactic centr in kpc
+        Distance from galactic centre in kpc
     rvir: float
         Virial Radius of the subhalo, in kpc
     vmax: float
@@ -455,9 +461,9 @@ if __name__ == "__main__":
     print(f"Extracting {sim_type} type halo from {directory}")
     postprocessed_cluster = Processed_Simulation(directory, sim_type, 
                             verbose=verbose, fix_rvir=True)
-    
-    postprocessed_cluster.plot_massloss(save_plot=True)
-    postprocessed_cluster.plot_rhoprof(save_plot=True)
-    postprocessed_cluster.plot_evo(save_plot=True)
-    
     postprocessed_cluster.save()
+    
+#    postprocessed_cluster.plot_massloss(save_plot=True)
+#    postprocessed_cluster.plot_rhoprof(save_plot=True)
+#    postprocessed_cluster.plot_evo(save_plot=True)
+    
