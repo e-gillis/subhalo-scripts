@@ -66,6 +66,8 @@ class Processed_Simulation:
         self.lookback_times = []
         # Mass ratio here
         self.m_ratios = []
+        # Bound Fraction
+        self.bound_fraction = []
         
         # Import Parameters
         param_name = glob(f"{directory}*params.dat")[0]
@@ -87,7 +89,7 @@ class Processed_Simulation:
                 print(f"Opening Cluster {cluster_07_name}")
             
             cluster_07 = ct.load_cluster(ctype='gyrfalcon', origin='galaxy',
-                                         units='WDunits',
+                                     units='WDunits',
                                          filename=cluster_07_name)
 
             for i in range(11):
@@ -100,7 +102,17 @@ class Processed_Simulation:
                 if fix_rvir:
                     fixed_rvir = self.halos[0].rvir
                 ignore_idx = self.halos[-1]._ignore_idx
-                cluster_07 = ct.advance_cluster(cluster_07)
+                if i != 10:
+                    cluster_07 = ct.advance_cluster(cluster_07)
+                else:
+                    cluster_07.to_centre()
+                    r_sorts = np.argsort(cluster_07.r)
+                    r_cutoff = cluster_07.r[r_sorts[len(cluster_07.r)//100]]
+                    kin, pot = ct.analysis.energies(cluster_07, i_d=(cluster_07.r < r_cutoff),
+                                                    specific=False)
+                    bound_array = (kin + pot) < 0
+                    bound_frac = np.sum(bound_array) / np.sum(cluster_07.r < r_cutoff)
+                    self.bound_fraction.append(bound_frac)
 
         else:
             self.start_sim = params[3]
@@ -134,8 +146,11 @@ class Processed_Simulation:
                     self.halos.append(Processed_Halo(cluster_05, self.zinfall, 
                                      fixed_rvir, ignore_idx, rho_bin_num))
                     self.lookback_times.append(self.halos[-1].lookback_time)
-                cluster_05 = ct.advance_cluster(cluster_05)
-                cluster_05.to_kpckms()
+                    cluster_05 = ct.advance_cluster(cluster_05)
+                    cluster_05.to_kpckms()
+                    
+                    if fixed_rvir: 
+                        fixed_rvir = self.halos[0].rvir
                 
             self.halos.append(Processed_Halo(cluster_05, self.zinfall, 
                                              fixed_rvir, ignore_idx, 
@@ -143,14 +158,25 @@ class Processed_Simulation:
             self.lookback_times.append(self.halos[-1].lookback_time)
             self.m_ratios.append(self.halos[-1].m_encl)
 
-            if fixed_rvir: 
-                fixed_rvir = self.halos[0].rvir
+
             ignore_idx = self.halos[-1]._ignore_idx
-            cluster_05 = ct.advance_cluster(cluster_05)
-            cluster_05.to_kpckms()
             
+            if i != 9:
+                cluster_05 = ct.advance_cluster(cluster_05)
+                cluster_05.to_kpckms()
+            else:    
+                cluster_05.to_centre()
+                r_sorts = np.argsort(cluster_05.r)
+                r_cutoff = cluster_05.r[r_sorts[len(cluster_05.r)//100]]
+                kin, pot = ct.analysis.energies(cluster_05, i_d=(cluster_05.r < r_cutoff),
+                                                specific=False)
+                bound_array = (kin + pot) < 0
+                bound_frac = np.sum(bound_array) / np.sum(cluster_05.r < r_cutoff)
+                self.bound_fraction.append(bound_frac)
+                    
         self.lookback_times = np.array(self.lookback_times)
         self.m_ratios = np.array(self.m_ratios) / self.halo_mass
+        self.bound_fraction = np.array(self.bound_fraction)
         
         for halo in self.halos:
             halo._ignore_idx = np.array([])
@@ -417,15 +443,6 @@ class Processed_Halo:
         # Get mass enclosed
         m_encl = np.sum(cluster.m[cluster_r < rvir])
         m_tot = cluster.mtot # Read Mtot in from params    
-        
-        # Get bound fraction
-        cluster.to_centre()
-        r_sorts = np.argsort(cluster.r)
-        r_cutoff = cluster.r[r_sorts[len(final_frane.r)//100]]
-        kin, pot = ct.analysis.energies(cluster, i_d=final_frame.r < r_cutoff, specific=False)
-        
-        bound_array = (ek + kin) < 0
-        bound_fraction = np.sum(bound_array) / np.sum(final_frame.r < r_cutoff)
 
         # Set Attributes
         self.lookback_time = t0 - tinfall - cluster.tphys 
@@ -443,7 +460,6 @@ class Processed_Halo:
         self.r_values = r_mean
         self.vprof = vprof
         self.rhoprof = rhoprof
-        self.bound_fraction = bound_fraction
         
         self._ignore_idx = _ignore_idx
 
