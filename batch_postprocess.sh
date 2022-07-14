@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-MAX_JOBS=10
+MAX_JOBS=20
 
 echo PID $$
 

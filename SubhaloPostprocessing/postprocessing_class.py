@@ -129,7 +129,7 @@ class Processed_Simulation:
         ignore_idx = self.halos[-1]._ignore_idx
         
         for i in range(10):
-            if i==0:
+            if i == 0:
                 if self.halos == []:
                     self.halos.append(Processed_Halo(cluster_05, self.zinfall, 
                                      fixed_rvir, ignore_idx, rho_bin_num))
@@ -416,7 +416,16 @@ class Processed_Halo:
         
         # Get mass enclosed
         m_encl = np.sum(cluster.m[cluster_r < rvir])
-        m_tot = cluster.mtot # Read Mtot in from params
+        m_tot = cluster.mtot # Read Mtot in from params    
+        
+        # Get bound fraction
+        cluster.to_centre()
+        r_sorts = np.argsort(cluster.r)
+        r_cutoff = cluster.r[r_sorts[len(final_frane.r)//100]]
+        kin, pot = ct.analysis.energies(cluster, i_d=final_frame.r < r_cutoff, specific=False)
+        
+        bound_array = (ek + kin) < 0
+        bound_fraction = np.sum(bound_array) / np.sum(final_frame.r < r_cutoff)
 
         # Set Attributes
         self.lookback_time = t0 - tinfall - cluster.tphys 
@@ -434,6 +443,8 @@ class Processed_Halo:
         self.r_values = r_mean
         self.vprof = vprof
         self.rhoprof = rhoprof
+        self.bound_fraction = bound_fraction
+        
         self._ignore_idx = _ignore_idx
 
         
