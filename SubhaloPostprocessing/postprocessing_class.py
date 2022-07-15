@@ -1,5 +1,8 @@
 #!/usr/local/bin/python3
 
+VERSION = "1.0.0"
+
+
 import matplotlib 
 if __name__ == "__main__":
     matplotlib.use('Agg')
@@ -189,6 +192,9 @@ class Processed_Simulation:
     
     
     def save(self):
+        # Set version
+        self.version = VERSION
+        
         with open(f"{self.directory[:-1]}_{self.sim_type}.halo", "wb") as f:
             pickle.dump(self, f)
         return None
