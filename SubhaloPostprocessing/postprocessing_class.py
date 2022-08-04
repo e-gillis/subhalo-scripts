@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 
 import matplotlib 
@@ -13,7 +13,16 @@ from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 
 import numpy as np
 import clustertools as ct
+
 import galpy as gal
+from galpy.potential import NFWPotential, rtide, HernquistPotential
+from galpy.util import coords, conversion
+from galpy.orbit import Orbit,Orbits
+
+ro = 8.
+vo = 220.
+mo = conversion.mass_in_msol(ro=ro,vo=vo)
+
 import astropy.units as u
 from glob import glob
 
@@ -22,14 +31,17 @@ from astropy.cosmology import FlatLambdaCDM
 import argparse
 import pickle
 
-
 #(1) Cosmological parameters (Planck 2018)
 OmegaM = 0.3153
 OmegaL = 0.6847
 sigma_8 = 0.8111
 h0 = 0.6736
 cosmo = FlatLambdaCDM(H0=h0*100.0,Om0=OmegaM)
+t07 = float(cosmo.age(0.7)/u.Gyr)
+t05 = float(cosmo.age(0.5)/u.Gyr)
 t0 = float(cosmo.age(0)/u.Gyr)
+
+
 
 
 class Processed_Simulation:
@@ -55,11 +67,15 @@ class Processed_Simulation:
         The interation time of the subhalo in Gyrs
     halo_mass: float
         The mass of the subhalo
+    pericentre: float
+        The pericentre of the orbit
+    closest_r: float
+        The closest the centre
     """
     
     def __init__(self, directory, sim_type, verbose=False, fix_rvir=False, 
                  rho_bin_num=40):
-        # Save if baryonic or DM
+        # Save if Baryonic or DM
         self.sim_type = sim_type
         # Set the directory of the simulation
         self.directory = directory
@@ -369,6 +385,44 @@ class Processed_Simulation:
                                       bbox_inches="tight")
             return None
         plt.show()
+        
+        
+    def set_orbital_params(self, potentials):
+        """Set the pericentre and closest approach of the subhalo. Adds two attributes.
+
+        === Parameters ===
+        potentials: list of galpy potentials
+            List of potentials to evolve the subhalo in
+
+        Adds pericentre and r_closest attributes
+        """
+        # Load initial coordinates
+        x, y, z = self.halos[0].cx, self.halos[0].cy, self.halos[0].cz
+        vx, vy, vz = self.halos[0].vx, self.halos[0].vy, self.halos[0].vz
+
+        # Convert initial coordinates
+        rad, phi, zed = coords.rect_to_cyl(x, y, z)
+        vR, vT, vzed = coords.rect_to_cyl_vec(vx, vy, vz, x, y, z)
+
+        # Make a coordinate array
+        vxvv = np.array([rad/ro, vR/vo, vT/vo, zed/ro, vzed/vo, phi])
+        orbit = Orbit(vxvv,ro=ro,vo=vo)
+
+        # Integrate to redshift 0.7
+        if len(self.halos) > 10:
+            times = np.linspace(0, (t07 - self.start_sim)/conversion.time_in_Gyr(ro=ro, vo=vo), 1000)
+            orbit.integrate(times, potentials)
+            self.z07_closest = orbit.rperi()
+
+        # Integrate to redshift 0.5
+        times = np.linspace(0, (t05 - self.start_sim)/conversion.time_in_Gyr(ro=ro, vo=vo), 1000)
+        orbit.integrate(times, potentials)
+        self.z05_closest = orbit.rperi()
+
+        # 10 Gyr integration
+        times = np.linspace(0, 10/conversion.time_in_Gyr(ro=ro, vo=vo), 1000)
+        orbit.integrate(times, potentials)
+        self.peri = orbit.rperi()
 
         
 
@@ -382,6 +436,10 @@ class Processed_Halo:
         x, y and z position of the subhalo in galacticentric coordinates
     vcentre: numpy array
         Velocity of the cluster centre in km/s
+    cx, cy, cz: float
+        coordinates of the centre in separate variables
+    vx, vy, vz: float
+        velocity of the centre in separate variables
     r: float
         Distance from galactic centre in kpc
     rvir: float
@@ -494,6 +552,38 @@ if __name__ == "__main__":
     print(f"Extracting {sim_type} type halo from {directory}")
     postprocessed_cluster = Processed_Simulation(directory, sim_type, 
                             verbose=verbose, fix_rvir=True)
+    
+    delta_c = 200 #with respect to the critical density at infall redshift
+    data_z_0_5 = np.load('M_1.0e13_z_0.5_Mres_1.0e6.npz')
+
+    # Hostpotential
+    hhost = cosmo.H(0.5).value / 100
+    hostpot = NFWPotential(mvir=data_z_0_5['MHost'][0]/1e12,
+                           conc=data_z_0_5['cHost'][0],
+                           H=hhost*100.0,Om=OmegaM,wrtcrit=True,
+                           overdens=delta_c,ro=ro,vo=vo)
+    
+    if sim_type == 'DM':
+        potentials = [hostpot]
+        postprocessed_cluster.set_orbital_params(potentials)
+        
+        
+    elif sim_type == 'Baryonic':
+        rs_hern = hostpot.a * ro
+        q_hern = 0.06 # will need to check if this is reasonable
+        f_hern = 5 # will need to check if this is reasonable
+        a_hern = q_hern*rs_hern # Definition
+        Ms_nfw = hostpot.mass(a_hern * u.kpc)
+        hernquist_norm = 4*f_hern*Ms_nfw
+
+        # Units are needed here for Galpy to work
+        hernpot = HernquistPotential(amp=2*hernquist_norm*u.Msun, a=a_hern*u.kpc, 
+                                     ro=ro, vo=vo)
+        
+        potentials = [hostpot, hernpot]
+        postprocessed_cluster.set_orbital_params(potentials)
+        
+    
     postprocessed_cluster.save()
     
 #    postprocessed_cluster.plot_massloss(save_plot=True)
