@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 
-VERSION = "1.1.0"
+VERSION = "1.2.2"
 
 import matplotlib 
 if __name__ == "__main__":
@@ -41,6 +41,19 @@ t05 = float(cosmo.age(0.5)/u.Gyr)
 t0 = float(cosmo.age(0)/u.Gyr)
 
 
+def modified_find_centre(cluster, orbit, ignore_idx, rmax=25):
+    x_or, y_or, z_or = orbit.x(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
+                       orbit.y(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
+                       orbit.z(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo))
+    centre_array = ct.find_centre(cluster, 
+                                  xstart=x_or, 
+                                  ystart=y_or, 
+                                  zstart=z_or, 
+                                  rmax=rmax, nsphere=500, 
+                                  indx=ignore_idx)
+    
+    return centre_array
+
 
 
 class Processed_Simulation:
@@ -72,18 +85,15 @@ class Processed_Simulation:
         The closest the centre
     """
     
-    def __init__(self, directory, sim_type, verbose=False, fix_rvir=False, 
-                 rho_bin_num=40):
+    def __init__(self, directory, sim_type, potentials, verbose=False, 
+                 fix_rvir=False, rho_bin_num=40):
+        rmax = 25
         # Save if Baryonic or DM
         self.sim_type = sim_type
         # Set the directory of the simulation
         self.directory = directory
         # Make a list of halos to populate
         self.halos = []
-        # Saving times like this is also useful, but possibly redundant
-        self.lookback_times = []
-        # Mass ratio here
-        self.m_ratios = []
         # Bound Fraction
         self.bound_fraction = []
         
@@ -102,36 +112,7 @@ class Processed_Simulation:
             self.halo_mass = params[0][-1]
             self.zinfall = params[0][2]
             cluster_07_name = glob(f'{directory}*z07.nemo.dat')[0]
-            
-            if verbose:
-                print(f"Opening Cluster {cluster_07_name}")
-            
-            cluster_07 = ct.load_cluster(ctype='gyrfalcon', origin='galaxy',
-                                     units='WDunits',
-                                         filename=cluster_07_name)
-
-            for i in range(11):
-                cluster_07.to_kpckms()
-                self.halos.append(Processed_Halo(cluster_07, self.zinfall, 
-                                                 fixed_rvir, ignore_idx, 
-                                                 rho_bin_num))
-                self.lookback_times.append(self.halos[-1].lookback_time)
-                self.m_ratios.append(self.halos[-1].m_encl)
-                if fix_rvir:
-                    fixed_rvir = self.halos[0].rvir
-                ignore_idx = self.halos[-1]._ignore_idx
-                if i != 10:
-                    cluster_07 = ct.advance_cluster(cluster_07)
-                else:
-                    cluster_07.to_centre()
-                    r_sorts = np.argsort(cluster_07.r)
-                    r_cutoff = cluster_07.r[r_sorts[len(cluster_07.r)//100]]
-                    kin, pot = ct.analysis.energies(cluster_07, i_d=(cluster_07.r < r_cutoff),
-                                                    specific=False)
-                    bound_array = (kin + pot) < 0
-                    bound_frac = np.sum(bound_array) / np.sum(cluster_07.r < r_cutoff)
-                    self.bound_fraction.append(bound_frac)
-
+            run_07 = True
         else:
             self.start_sim = params[3]
             self.evo_time = params[4]
@@ -140,61 +121,75 @@ class Processed_Simulation:
             self.halo_no = str(int(params[0])).zfill(6)
             self.halo_id = str(int(params[1])).zfill(6)
         
+        
+        if run_07: 
+            if verbose:
+                print(f"Opening Cluster {cluster_07_name}")
+            
+            cluster_07 = ct.load_cluster(ctype='new_gyrfalcon', origin='galaxy',
+                                         units='WDunits', filename=cluster_07_name)
+            cluster_07.to_kpckms()
+            orbit = initialize_orbit(cluster_07, potentials)
+            orbit_initialized = True
+
+            for i in range(11):
+                cluster_07.to_kpckms()
+                
+                print(f"0.7 frame {i+1}")
+                # Add cluster unless it's the final frame
+                if i != 10:
+                    self.halos.append(Processed_Halo(cluster_07, self.zinfall, 
+                                      fixed_rvir, ignore_idx, rho_bin_num, rmax=rmax,
+                                      orbit=orbit))
+                    cluster_07 = ct.advance_cluster(cluster_07)
+                
+                # If it's the final frame, compute the energy
+                else:
+                    bound_fraction = get_bound_fraction(cluster_07, orbit, 
+                                                        ignore_idx=ignore_idx,rmax=rmax)
+                    self.bound_fraction.append(bound_fraction)
+                
+                if fix_rvir:
+                    fixed_rvir = self.halos[0].rvir              
+                ignore_idx = self.halos[-1]._ignore_idx
+        
+        # Get subhalo name
         cluster_05_name = glob(f'{directory}*z05.nemo.dat')[0]
         
         if verbose:
             print(f"Opening Cluster {cluster_05_name}")
         
-        cluster_05 = ct.load_cluster(ctype='gyrfalcon', origin='galaxy',
+        cluster_05 = ct.load_cluster(ctype='new_gyrfalcon', origin='galaxy',
                                      units='WDunits',
                                      filename=cluster_05_name)
         cluster_05.to_kpckms()
-        self.halos.append(Processed_Halo(cluster_05, self.zinfall, fixed_rvir, 
-                                         ignore_idx, rho_bin_num))
-        self.lookback_times.append(self.halos[-1].lookback_time)
-        self.m_ratios.append(self.halos[-1].m_encl)
         
-        if fix_rvir:
-            fixed_rvir = self.halos[0].rvir
-        ignore_idx = self.halos[-1]._ignore_idx
-        
-        for i in range(10):
-            if i == 0:
-                if self.halos == []:
-                    self.halos.append(Processed_Halo(cluster_05, self.zinfall, 
-                                     fixed_rvir, ignore_idx, rho_bin_num))
-                    self.lookback_times.append(self.halos[-1].lookback_time)
-                    cluster_05 = ct.advance_cluster(cluster_05)
-                    cluster_05.to_kpckms()
-                    
-                    if fixed_rvir: 
-                        fixed_rvir = self.halos[0].rvir
-                
-            self.halos.append(Processed_Halo(cluster_05, self.zinfall, 
-                                             fixed_rvir, ignore_idx, 
-                                             rho_bin_num))
-            self.lookback_times.append(self.halos[-1].lookback_time)
-            self.m_ratios.append(self.halos[-1].m_encl)
+        if not orbit_initialized:
+            orbit = initialize_orbit(cluster_05, potentials)
+            orbit_initialized = True
 
-
+        for i in range(11):
+            print(f"0.5 frame {i+1}")
+            cluster_05.to_kpckms()
+            self.halos.append(Processed_Halo(cluster_05, self.zinfall, fixed_rvir, 
+                                             ignore_idx, rho_bin_num, rmax=rmax,
+                                             orbit=orbit))
+            if fix_rvir:
+                fixed_rvir = self.halos[0].rvir
             ignore_idx = self.halos[-1]._ignore_idx
             
-            if i != 9:
+            # Compute the energy if it's the final frame, else advance
+            if i != 10:
                 cluster_05 = ct.advance_cluster(cluster_05)
-                cluster_05.to_kpckms()
-            else:    
-                cluster_05.to_centre()
-                r_sorts = np.argsort(cluster_05.r)
-                r_cutoff = cluster_05.r[r_sorts[len(cluster_05.r)//100]]
-                kin, pot = ct.analysis.energies(cluster_05, i_d=(cluster_05.r < r_cutoff),
-                                                specific=False)
-                bound_array = (kin + pot) < 0
-                bound_frac = np.sum(bound_array) / np.sum(cluster_05.r < r_cutoff)
-                self.bound_fraction.append(bound_frac)
+            else:
+                bound_fraction = get_bound_fraction(cluster_05, orbit, ignore_idx=ignore_idx, 
+                                                    rmax=rmax)
+                self.bound_fraction.append(bound_fraction)
                     
-        self.lookback_times = np.array(self.lookback_times)
-        self.m_ratios = np.array(self.m_ratios) / self.halo_mass
+        self.lookback_times = np.array([halo.lookback_time for halo in self.halos])
+        self.m_ratios = np.array([halo.m_encl for halo in self.halos]) / self.halo_mass
         self.bound_fraction = np.array(self.bound_fraction)
+        self.orbit = orbit
         
         for halo in self.halos:
             halo._ignore_idx = np.array([])
@@ -424,135 +419,6 @@ class Processed_Simulation:
         self.peri = orbit.rperi()
 
 
-class New_Processed_Simulation(Processed_Simulation):
-    
-    def __init__(self, directory, sim_type, verbose=False, fix_rvir=False, 
-                 rho_bin_num=40):
-        # Save if Baryonic or DM
-        self.sim_type = sim_type
-        # Set the directory of the simulation
-        self.directory = directory
-        # Make a list of halos to populate
-        self.halos = []
-        # Saving times like this is also useful, but possibly redundant
-        self.lookback_times = []
-        # Mass ratio here
-        self.m_ratios = []
-        # Bound Fraction
-        self.bound_fraction = []
-        
-        # Import Parameters
-        param_name = glob(f"{directory}*params.dat")[0]
-        params = np.loadtxt(param_name)
-        
-        fixed_rvir = None
-        ignore_idx = None
-        
-        if len(params.shape) > 1:
-            self.halo_no = str(int(params[0, 0])).zfill(6)
-            self.halo_id = str(int(params[0, 1])).zfill(6)
-            self.start_sim = params[0][3]
-            self.evo_time = params[-1][4]
-            self.halo_mass = params[0][-1]
-            self.zinfall = params[0][2]
-            cluster_07_name = glob(f'{directory}*z07.nemo.dat')[0]
-            
-            if verbose:
-                print(f"Opening Cluster {cluster_07_name}")
-            
-            cluster_07 = ct.load_cluster(ctype='new_gyrfalcon', origin='galaxy',
-                                     units='WDunits',
-                                         filename=cluster_07_name)
-
-            for i in range(11):
-                cluster_07.to_kpckms()
-                self.halos.append(Processed_Halo(cluster_07, self.zinfall, 
-                                                 fixed_rvir, ignore_idx, 
-                                                 rho_bin_num))
-                self.lookback_times.append(self.halos[-1].lookback_time)
-                self.m_ratios.append(self.halos[-1].m_encl)
-                if fix_rvir:
-                    fixed_rvir = self.halos[0].rvir
-                ignore_idx = self.halos[-1]._ignore_idx
-                if i != 10:
-                    cluster_07 = ct.advance_cluster(cluster_07)
-                else:
-                    cluster_07.to_centre()
-                    r_sorts = np.argsort(cluster_07.r)
-                    r_cutoff = cluster_07.r[r_sorts[len(cluster_07.r)//100]]
-                    kin, pot = ct.analysis.energies(cluster_07, i_d=(cluster_07.r < r_cutoff),
-                                                    specific=False)
-                    bound_array = (kin + pot) < 0
-                    bound_frac = np.sum(bound_array) / np.sum(cluster_07.r < r_cutoff)
-                    self.bound_fraction.append(bound_frac)
-
-        else:
-            self.start_sim = params[3]
-            self.evo_time = params[4]
-            self.halo_mass = params[-1]
-            self.zinfall = params[2]
-            self.halo_no = str(int(params[0])).zfill(6)
-            self.halo_id = str(int(params[1])).zfill(6)
-        
-        cluster_05_name = glob(f'{directory}*z05.nemo.dat')[0]
-        
-        if verbose:
-            print(f"Opening Cluster {cluster_05_name}")
-        
-        cluster_05 = ct.load_cluster(ctype='new_gyrfalcon', origin='galaxy',
-                                     units='WDunits',
-                                     filename=cluster_05_name)
-        cluster_05.to_kpckms()
-        self.halos.append(Processed_Halo(cluster_05, self.zinfall, fixed_rvir, 
-                                         ignore_idx, rho_bin_num))
-        self.lookback_times.append(self.halos[-1].lookback_time)
-        self.m_ratios.append(self.halos[-1].m_encl)
-        
-        if fix_rvir:
-            fixed_rvir = self.halos[0].rvir
-        ignore_idx = self.halos[-1]._ignore_idx
-        
-        for i in range(10):
-            if i == 0:
-                if self.halos == []:
-                    self.halos.append(Processed_Halo(cluster_05, self.zinfall, 
-                                     fixed_rvir, ignore_idx, rho_bin_num))
-                    self.lookback_times.append(self.halos[-1].lookback_time)
-                    cluster_05 = ct.advance_cluster(cluster_05)
-                    cluster_05.to_kpckms()
-                    
-                    if fixed_rvir: 
-                        fixed_rvir = self.halos[0].rvir
-                
-            self.halos.append(Processed_Halo(cluster_05, self.zinfall, 
-                                             fixed_rvir, ignore_idx, 
-                                             rho_bin_num))
-            self.lookback_times.append(self.halos[-1].lookback_time)
-            self.m_ratios.append(self.halos[-1].m_encl)
-
-
-            ignore_idx = self.halos[-1]._ignore_idx
-            
-            if i != 9:
-                cluster_05 = ct.advance_cluster(cluster_05)
-                cluster_05.to_kpckms()
-            else:    
-                cluster_05.to_centre()
-                r_sorts = np.argsort(cluster_05.r)
-                r_cutoff = cluster_05.r[r_sorts[len(cluster_05.r)//100]]
-                kin, pot = ct.analysis.energies(cluster_05, i_d=(cluster_05.r < r_cutoff),
-                                                specific=False)
-                bound_array = (kin + pot) < 0
-                bound_frac = np.sum(bound_array) / np.sum(cluster_05.r < r_cutoff)
-                self.bound_fraction.append(bound_frac)
-                    
-        self.lookback_times = np.array(self.lookback_times)
-        self.m_ratios = np.array(self.m_ratios) / self.halo_mass
-        self.bound_fraction = np.array(self.bound_fraction)
-        
-        for halo in self.halos:
-            halo._ignore_idx = np.array([])
-
 
 class Processed_Halo:
     """A processed subhalo, imported using clustertools
@@ -560,6 +426,8 @@ class Processed_Halo:
     === Attributes ===
     lookback_time: float
         Lookback time of the halo in Gyrs
+    tphys: float
+        Time the subhalo has evolved in Gyrs
     centre: numpy array
         x, y and z position of the subhalo in galacticentric coordinates
     vcentre: numpy array
@@ -588,14 +456,18 @@ class Processed_Halo:
         velocity profile of the subhalo sampled at r
     """
     
-    def __init__(self, cluster, zinfall, fixed_rvir=None, _ignore_idx=None, rho_bin_num=40):
+    def __init__(self, cluster, zinfall, fixed_rvir=None, _ignore_idx=None, rho_bin_num=40,
+                 orbit=None, rmax=None):
         
         # Define hz from tinfall
         hz = cosmo.H(zinfall).value/100
         tinfall = cosmo.age(zinfall).value
-    
+        
         # Get centre, set to cluster
-        cx, cy, cz, vx, vy, vz = ct.find_centre(cluster, indx=_ignore_idx)
+        if orbit is not None:
+            cx, cy, cz, vx, vy, vz = modified_find_centre(cluster, orbit, _ignore_idx)
+        else:                      
+            cx, cy, cz, vx, vy, vz = ct.find_centre(cluster, indx=_ignore_idx, rmax=rmax)
         
         # Get virial radius
         if fixed_rvir is not None:
@@ -610,9 +482,10 @@ class Processed_Halo:
                    indx=_ignore_idx,
                    Om=OmegaM, H=100*hz)
             self.rvir_actual = rvir
-            
+                    
         cluster_r = ((cluster.x - cx)**2 + (cluster.y - cy)**2 + (cluster.z - cz)**2)**0.5
-        _ignore_idx = cluster_r < 3*rvir
+        _ignore_idx = cluster_r < self.rvir_actual
+        print(np.sum(_ignore_idx) / len(cluster.r))
                 
         r_values = np.linspace(0, rvir, rho_bin_num+1)
         
@@ -638,6 +511,7 @@ class Processed_Halo:
 
         # Set Attributes
         self.lookback_time = t0 - tinfall - cluster.tphys 
+        self.tphys = cluster.tphys
         self.centre = np.array((cx, cy, cz))
         self.vcentre = np.array((vx, vy, vz))
         self.cx, self.cy, self.cz = (cx, cy, cz) # Can't hurt having this twice
@@ -660,7 +534,46 @@ def load_halo(path):
     with open(path, "rb") as f:
         loaded_halo = pickle.load(f)
     return loaded_halo
-        
+
+
+def initialize_orbit(cluster, potentials):
+    x, y, z, vx, vy, vz = ct.find_centre(cluster)
+    
+    # Convert initial coordinates
+    rad, phi, zed = coords.rect_to_cyl(x, y, z)
+    vR, vT, vzed = coords.rect_to_cyl_vec(vx, vy, vz, x, y, z)
+
+    # Make a coordinate array
+    vxvv = np.array([rad/ro, vR/vo, vT/vo, zed/ro, vzed/vo, phi])
+    orbit = Orbit(vxvv,ro=ro,vo=vo)
+
+    # Integrate to 20 Gyrs   
+    times = np.linspace(0, 20/conversion.time_in_Gyr(ro=ro, vo=vo), 20001)
+    orbit.integrate(times, potentials)
+    
+    return orbit
+
+
+def get_bound_fraction(cluster, orbit, ignore_idx=None, rmax=None):
+    
+    if True:
+        return 1
+    
+    x, y, z = orbit.x(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
+              orbit.y(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
+              orbit.z(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo))
+    cx, cy, cz = ct.find_centre(cluster, indx=ignore_idx,
+                                xstart=x, ystart=y, zstart=z, rmax=rmax)[:3]
+    r_values = ((cluster.x - cx)**2 + (cluster.z - cz)**2 + (cluster.z - cz)**2)**0.5
+    r_sorts = np.sort(r_values)
+    r_cutoff = r_sorts[len(r_sorts)//100 + 1]
+    kin, pot = ct.analysis.energies(cluster, i_d=(r_values < r_cutoff),
+                                    specific=False)
+    bound_array = (kin + pot) < 0
+    bound_frac = np.sum(bound_array) / np.sum(r_values < r_cutoff)
+    
+    return bound_frac
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -681,12 +594,6 @@ if __name__ == "__main__":
     new_gyr = args.newgyr
  
     print(f"Extracting {sim_type} type halo from {directory}")
-    if new_gyr:
-        postprocessed_cluster = New_Processed_Simulation(directory, sim_type, 
-                                verbose=verbose, fix_rvir=True)
-    else:
-        postprocessed_cluster = Processed_Simulation(directory, sim_type, 
-                                verbose=verbose, fix_rvir=True)
     
     delta_c = 200 #with respect to the critical density at infall redshift
     data_z_0_5 = np.load('M_1.0e13_z_0.5_Mres_1.0e6.npz')
@@ -699,9 +606,7 @@ if __name__ == "__main__":
                            overdens=delta_c,ro=ro,vo=vo)
     
     if sim_type == 'DM':
-        potentials = [hostpot]
-        postprocessed_cluster.set_orbital_params(potentials)
-        
+        potentials = [hostpot]       
         
     elif sim_type == 'Baryonic':
         rs_hern = hostpot.a * ro
@@ -716,7 +621,14 @@ if __name__ == "__main__":
                                      ro=ro, vo=vo)
         
         potentials = [hostpot, hernpot]
-        postprocessed_cluster.set_orbital_params(potentials)
+        
+    if new_gyr:
+        postprocessed_cluster = New_Processed_Simulation(directory, sim_type, 
+                                verbose=verbose, fix_rvir=True)
+    else:
+        postprocessed_cluster = Processed_Simulation(directory, sim_type, potentials,
+                                verbose=verbose, fix_rvir=True)
+    postprocessed_cluster.set_orbital_params(potentials)
         
     
     postprocessed_cluster.save()
@@ -725,3 +637,5 @@ if __name__ == "__main__":
 #    postprocessed_cluster.plot_rhoprof(save_plot=True)
 #    postprocessed_cluster.plot_evo(save_plot=True)
     
+
+### HERE BE DRAGONS ###
