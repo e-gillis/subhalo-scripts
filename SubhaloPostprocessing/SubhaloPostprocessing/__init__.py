@@ -1,1 +1,2 @@
-from postprocessing_class import Processed_Simulation, Processed_Halo, load_halo 
+from postprocessing_class import Processed_Simulation, New_Processed_Simulation
+from postprocessing_class import Processed_Halo, load_halo, VERSION
