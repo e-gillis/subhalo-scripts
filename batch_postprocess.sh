@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-MAX_JOBS=24
+MAX_JOBS=20
 
 INFILE="files_to_process.dat"
 OUTFILE="processed.dat"
@@ -26,10 +26,11 @@ while (( $JOBS_LEFT > 0 )); do
             JOBS_RUNNING=$(ps -u gillis | grep postprocessing | wc -l)
     else 
         DIR=$(head -n 1 $INFILE)
-        echo $(date +"%R %d %B"): Submitting job to process: $DIR >> $LOGFILE
+        
         for f in $DIR*z??.nemo; do s2a $f $f".dat"; done
-        postprocessing_class.py $DIR $1 --new --silent >> $LOGFILE 2>&1 &
-        $(sleep 200m; rm $DIR*.nemo.dat) &
+        echo $(date +"%R %d %B"): Submitting job to process: $DIR >> $LOGFILE
+        postprocessing_class.py $DIR $1 --silent --remove_datfiles >> $LOGFILE 2>&1 &
+        
         echo $DIR >> $OUTFILE
         sed -i -e "1d" $INFILE
     fi

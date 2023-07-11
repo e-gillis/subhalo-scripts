@@ -6,7 +6,7 @@ long_description = (here / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="SubhaloPostprocessing",
-    version="1.1.0",
+    version="1.2.2",
     description="Classes for processing Subhalos",
     author="Erik Gillis",
     author_email="erik.gillis@mail.utoronto.ca",

@@ -1,6 +1,6 @@
 #!/usr/local/bin/python3
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 import matplotlib 
 if __name__ == "__main__":
@@ -12,6 +12,7 @@ from mpl_toolkits.axes_grid1.anchored_artists import AnchoredSizeBar
 
 import numpy as np
 import clustertools as ct
+import os
 
 import galpy as gal
 from galpy.potential import NFWPotential, rtide, HernquistPotential
@@ -41,16 +42,62 @@ t05 = float(cosmo.age(0.5)/u.Gyr)
 t0 = float(cosmo.age(0)/u.Gyr)
 
 
-def modified_find_centre(cluster, orbit, ignore_idx, rmax=25):
-    x_or, y_or, z_or = orbit.x(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
-                       orbit.y(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
-                       orbit.z(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo))
-    centre_array = ct.find_centre(cluster, 
-                                  xstart=x_or, 
-                                  ystart=y_or, 
-                                  zstart=z_or, 
-                                  rmax=rmax, nsphere=500, 
-                                  indx=ignore_idx)
+def modified_find_centre(cluster, orbit, ignore_idx, rmax=25): 
+    bovy_t = cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)
+    x_or, y_or, z_or = orbit.x(bovy_t), orbit.y(bovy_t), orbit.z(bovy_t)
+    
+    # Uninformed Centre Finding
+    basic_centre_array = ct.find_centre(cluster)
+    
+    # With Ignore idx
+    ignore_centre_array = ct.find_centre(cluster, indx=ignore_idx)
+    
+    # With the density method
+    density_centre_array = ct.find_centre(cluster, nsphere=len(cluster.x)//100, 
+                                          density=False, nsigma=3,
+                                          xstart=x_or, 
+                                          ystart=y_or, 
+                                          zstart=z_or)
+    
+    # With the density method and ignore idx
+    densidx_centre_array = ct.find_centre(cluster, nsphere=len(cluster.x)//100, 
+                                          density=False, nsigma=3,
+                                          xstart=x_or, 
+                                          ystart=y_or, 
+                                          zstart=z_or,
+                                          indx=ignore_idx)
+    
+    centre_arrays = [basic_centre_array, ignore_centre_array, density_centre_array, densidx_centre_array]    
+    
+    # Go through different rmax values?
+    for set_rmax in [rmax/2, rmax, rmax*2]:
+        # With the orbit and ignore idx
+        orbitidx_centre_array = ct.find_centre(cluster, 
+                                               xstart=x_or, 
+                                               ystart=y_or, 
+                                               zstart=z_or, 
+                                               rmax=set_rmax,
+                                               indx=ignore_idx)
+
+        # Just with the orbit
+        orbit_centre_array = ct.find_centre(cluster, 
+                                            xstart=x_or, 
+                                            ystart=y_or, 
+                                            zstart=z_or, 
+                                            rmax=set_rmax)
+           
+        centre_arrays.extend([orbit_centre_array, orbitidx_centre_array])
+
+    psums = []
+
+    for c in centre_arrays:
+        r = sum([(cluster.x-c[0])**2, 
+                 (cluster.y-c[1])**2, 
+                 (cluster.z-c[2])**2])**0.5
+        psums.append(sum(r) < 1)
+
+    centre_array = centre_arrays[np.argmax(psums)]
+
     
     return centre_array
 
@@ -103,6 +150,7 @@ class Processed_Simulation:
         
         fixed_rvir = None
         ignore_idx = None
+        orbit_initialized = False
         
         if len(params.shape) > 1:
             self.halo_no = str(int(params[0, 0])).zfill(6)
@@ -120,6 +168,7 @@ class Processed_Simulation:
             self.zinfall = params[2]
             self.halo_no = str(int(params[0])).zfill(6)
             self.halo_id = str(int(params[1])).zfill(6)
+            run_07 = False
         
         
         if run_07: 
@@ -135,12 +184,19 @@ class Processed_Simulation:
             for i in range(11):
                 cluster_07.to_kpckms()
                 
-                print(f"0.7 frame {i+1}")
+                # print(f"0.7 frame {i+1}")
                 # Add cluster unless it's the final frame
                 if i != 10:
                     self.halos.append(Processed_Halo(cluster_07, self.zinfall, 
                                       fixed_rvir, ignore_idx, rho_bin_num, rmax=rmax,
-                                      orbit=orbit))
+                                      orbit=orbit))                   
+                    
+                    # To plot the cluster 
+                    density_plot(cluster_07, self.halos[-1].centre,
+                                 self.halos[-1].rvir, title=f'07 frame {i}', 
+                                 show=False, 
+                                 savefig=f"{self.directory}{self.directory[:-1]}_07_rhoprof_{i}.png")
+                    
                     cluster_07 = ct.advance_cluster(cluster_07)
                 
                 # If it's the final frame, compute the energy
@@ -152,6 +208,9 @@ class Processed_Simulation:
                 if fix_rvir:
                     fixed_rvir = self.halos[0].rvir              
                 ignore_idx = self.halos[-1]._ignore_idx
+                
+                # To plot the cluster 
+                # density_plot(cluster_07, centre, rvir, title=None, savefig=None, show=True)
         
         # Get subhalo name
         cluster_05_name = glob(f'{directory}*z05.nemo.dat')[0]
@@ -169,7 +228,7 @@ class Processed_Simulation:
             orbit_initialized = True
 
         for i in range(11):
-            print(f"0.5 frame {i+1}")
+            # print(f"0.5 frame {i+1}")
             cluster_05.to_kpckms()
             self.halos.append(Processed_Halo(cluster_05, self.zinfall, fixed_rvir, 
                                              ignore_idx, rho_bin_num, rmax=rmax,
@@ -177,6 +236,13 @@ class Processed_Simulation:
             if fix_rvir:
                 fixed_rvir = self.halos[0].rvir
             ignore_idx = self.halos[-1]._ignore_idx
+            
+            
+            # To plot the cluster
+            density_plot(cluster_05, self.halos[-1].centre,
+                         self.halos[-1].rvir, title=f'05 frame {i}', 
+                         show=False, 
+                         savefig=f"{self.directory}{self.directory[:-1]}_05_rhoprof_{i}.png")
             
             # Compute the energy if it's the final frame, else advance
             if i != 10:
@@ -485,7 +551,7 @@ class Processed_Halo:
                     
         cluster_r = ((cluster.x - cx)**2 + (cluster.y - cy)**2 + (cluster.z - cz)**2)**0.5
         _ignore_idx = cluster_r < self.rvir_actual
-        print(np.sum(_ignore_idx) / len(cluster.r))
+        # print(np.sum(_ignore_idx) / len(cluster.r))
                 
         r_values = np.linspace(0, rvir, rho_bin_num+1)
         
@@ -530,6 +596,24 @@ class Processed_Halo:
         self._ignore_idx = _ignore_idx
 
         
+def density_plot(cluster, centre, rvir, title=None, savefig=None, show=True):
+    # For plotting the density at each timestep
+    bins = [np.linspace(centre[0]-0.1*rvir, centre[0]+0.1*rvir, 41), 
+            np.linspace(centre[1]-0.1*rvir, centre[1]+0.1*rvir, 41)]
+    plt.hist2d(cluster.x, cluster.y, bins=bins, cmap='Greys')
+    plt.scatter(centre[0], centre[1], marker='+', s=50, color='red')
+
+    plt.xlim(centre[0]-0.1*rvir, centre[0]+0.1*rvir)
+    plt.ylim(centre[1]-0.1*rvir, centre[1]+0.1*rvir)
+    
+    if title:
+        plt.title(title)
+    if savefig:
+        plt.savefig(savefig)
+    if show:
+        plt.show()
+        
+        
 def load_halo(path):
     with open(path, "rb") as f:
         loaded_halo = pickle.load(f)
@@ -555,15 +639,8 @@ def initialize_orbit(cluster, potentials):
 
 
 def get_bound_fraction(cluster, orbit, ignore_idx=None, rmax=None):
+    cx, cy, cz = modified_find_centre(cluster, orbit, ignore_idx, rmax)[:3]
     
-    if True:
-        return 1
-    
-    x, y, z = orbit.x(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
-              orbit.y(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo)),\
-              orbit.z(cluster.tphys/conversion.time_in_Gyr(ro=ro, vo=vo))
-    cx, cy, cz = ct.find_centre(cluster, indx=ignore_idx,
-                                xstart=x, ystart=y, zstart=z, rmax=rmax)[:3]
     r_values = ((cluster.x - cx)**2 + (cluster.z - cz)**2 + (cluster.z - cz)**2)**0.5
     r_sorts = np.sort(r_values)
     r_cutoff = r_sorts[len(r_sorts)//100 + 1]
@@ -584,14 +661,13 @@ if __name__ == "__main__":
                         help="Type of simulation (Baryonic vs DM)")
     parser.add_argument("--silent", action="store_true", 
                         help="Surpress console outputs")
-    parser.add_argument("--newgyr", action="store_true",
-                        help="Use new gyrfalcon ctype")
+    parser.add_argument("--remove_datfiles", action="store_true",
+                        help="remove datfiles")
     args = parser.parse_args()
     
     directory = args.dir
     sim_type = args.sim_type
     verbose = not args.silent
-    new_gyr = args.newgyr
  
     print(f"Extracting {sim_type} type halo from {directory}")
     
@@ -622,20 +698,19 @@ if __name__ == "__main__":
         
         potentials = [hostpot, hernpot]
         
-    if new_gyr:
-        postprocessed_cluster = New_Processed_Simulation(directory, sim_type, 
-                                verbose=verbose, fix_rvir=True)
-    else:
-        postprocessed_cluster = Processed_Simulation(directory, sim_type, potentials,
+    postprocessed_cluster = Processed_Simulation(directory, sim_type, potentials,
                                 verbose=verbose, fix_rvir=True)
     postprocessed_cluster.set_orbital_params(potentials)
-        
-    
     postprocessed_cluster.save()
+    
+    
+    if args.remove_datfiles:
+        datfiles = glob(f'{directory}*z0?.nemo.dat')
+        nemofiles = glob(f'{directory}*z0?.nemo')
+        
+        if len(nemofiles) == len(datfiles):
+            [os.remove(datfile) for datfile in datfiles]
     
 #    postprocessed_cluster.plot_massloss(save_plot=True)
 #    postprocessed_cluster.plot_rhoprof(save_plot=True)
 #    postprocessed_cluster.plot_evo(save_plot=True)
-    
-
-### HERE BE DRAGONS ###
